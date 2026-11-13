@@ -1,0 +1,18 @@
+# Blocklist - hashes that must never appear in this index.
+#
+# Format: one 40-character info hash per line, lowercase or uppercase.
+# An optional reason may follow after a tab (or a space); it is ignored by the
+# parser and exists only for the operator.
+#
+#   <hash>	<reason>
+#
+# Reload without a restart: admin board -> "Reload blocklist",
+# POST /api/reload, or the "reload" console command.
+#
+# Blocked hashes are refused at harvest time (no metadata is fetched), filtered
+# out of search results and hidden from the JSON API. A blocked torrent page
+# answers 404.
+
+# Examples (kept commented so a fresh install indexes everything):
+# 0123456789abcdef0123456789abcdef01234567	DMCA - reported by rights holder
+# fedcba9876543210fedcba9876543210fedcba98	malware

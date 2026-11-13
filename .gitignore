@@ -1,0 +1,32 @@
+# runtime
+bin/
+data/*
+!data/blocklist.txt
+logs/
+temp/
+*.log
+*.bak
+*.tmp
+config.ini
+config.ini.bad-*
+
+# index snapshots and crawler state (large, machine specific)
+*.db
+*.db.tmp
+*.idx
+*.queue
+node.id
+
+# references and build junk
+refs/
+obj/
+.vs/
+*.user
+*.suo
+*.pdb
+*.cache
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store

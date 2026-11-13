@@ -1,0 +1,19 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{md,yml,json,svg,html,css,js}]
+end_of_line = lf
+
+[*.{cmd,ps1}]
+end_of_line = crlf
+
+[*.cs]
+indent_size = 4
+# C# 4 only: no async/await, no string interpolation, no null-conditional.
