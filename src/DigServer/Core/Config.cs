@@ -127,6 +127,17 @@ namespace Dig.Core
         public int MaxNameLength = 300;
         public int MaxFiles = 400;
         public int SaveDebounceMs = 2000;
+        public int PendingHashesMax = 500000;
+
+        // -------------------------------------------------------------- [privacy]
+        // Which address was seen holding which torrent. Mirrors what the DHT
+        // already broadcasts; bounded and prunable, and one flag disables it.
+        public bool PeerTrackingEnabled = true;
+        public int PeerRetentionDays = 30;
+        public int PeerMaxIps = 200000;
+        public int PeerMaxHashesPerIp = 200;
+        public bool PeerMaskLastOctet = false;
+        public bool PeerPublicLookup = true;
 
         // --------------------------------------------------------------- [limits]
         public int SearchPerMin = 60;
@@ -319,6 +330,16 @@ namespace Dig.Core
                         else if (key == "maxfiles") MaxFiles = Int(value, MaxFiles);
                         else if (key == "blocklistfile") BlocklistFile = value;
                         else if (key == "savedebouncems") SaveDebounceMs = Int(value, SaveDebounceMs);
+                        else if (key == "pendinghashesmax") PendingHashesMax = Int(value, PendingHashesMax);
+                        break;
+
+                    case "privacy":
+                        if (key == "peertracking") PeerTrackingEnabled = Bool(value, PeerTrackingEnabled);
+                        else if (key == "retentiondays") PeerRetentionDays = Int(value, PeerRetentionDays);
+                        else if (key == "maxips") PeerMaxIps = Int(value, PeerMaxIps);
+                        else if (key == "maxhashesperip") PeerMaxHashesPerIp = Int(value, PeerMaxHashesPerIp);
+                        else if (key == "masklastoctet") PeerMaskLastOctet = Bool(value, PeerMaskLastOctet);
+                        else if (key == "publiclookup") PeerPublicLookup = Bool(value, PeerPublicLookup);
                         break;
 
                     case "limits":
@@ -404,6 +425,15 @@ namespace Dig.Core
             if (MaxFiles < 10) MaxFiles = 10;
             if (MaxFiles > 5000) MaxFiles = 5000;
             if (SaveDebounceMs < 100) SaveDebounceMs = 100;
+            if (PendingHashesMax < 1000) PendingHashesMax = 1000;
+            if (PendingHashesMax > 5000000) PendingHashesMax = 5000000;
+
+            if (PeerRetentionDays < 0) PeerRetentionDays = 0;
+            if (PeerRetentionDays > 3650) PeerRetentionDays = 3650;
+            if (PeerMaxIps < 1000) PeerMaxIps = 1000;
+            if (PeerMaxIps > 2000000) PeerMaxIps = 2000000;
+            if (PeerMaxHashesPerIp < 10) PeerMaxHashesPerIp = 10;
+            if (PeerMaxHashesPerIp > 5000) PeerMaxHashesPerIp = 5000;
 
             if (SearchPerMin < 0) SearchPerMin = 0;
             if (ApiPerMin < 0) ApiPerMin = 0;

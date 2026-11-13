@@ -24,6 +24,8 @@ NuGet, no database server, no files hosted.
 | **Crawls** | mainline DHT (BEP 5) + `sample_infohashes` (BEP 51) |
 | **Fetches** | `ut_metadata` (BEP 9), verified with SHA-1 against the info hash |
 | **Indexes** | name, total size, file list, first/last seen, seeder count |
+| **Remembers** | which address was seen with which torrent (bounded, opt-out) |
+| **Imports** | your own `.torrent` files and hash lists, offline |
 | **Serves** | server-rendered HTML, JSON API, sitemap, robots |
 | **Never** | hosts, stores or transfers any actual file |
 
@@ -45,6 +47,12 @@ joins the DHT and starts filling the index. Give it ten minutes before judging t
 result list — a cold index is empty by definition.
 
 Then open `tools\firewall.cmd` once, so the DHT can actually receive UDP.
+
+Run it as a Windows service instead (auto-start, restarts on failure):
+
+```cmd
+tools\service.cmd
+```
 
 ## How it works
 
@@ -92,6 +100,14 @@ Details: [ARCHITECTURE](docs/ARCHITECTURE.md) · [DHT](docs/DHT.md) ·
 - Inverted index: AND with OR fallback, bounded substring scan for prefixes
 - BM25-flavoured scoring + seeder and freshness boosts
 - Four sort orders, blocklist filtering at read time
+- Unresolved hashes kept in `data/pending.txt` and retried on every start
+- Offline import of `.torrent` files and hash lists
+
+**Address index**
+- `/ip/<address>`: which torrents an address was seen with
+- Built from `announce_peer` and `get_peers` — public DHT data only
+- Retention, hard caps, optional last-octet masking, one flag to disable
+- `noindex` pages, never in the sitemap
 
 **Web**
 - Hand-written HTTP/1.1 (no `HttpListener`, no URL ACL, XP-safe)
@@ -111,6 +127,7 @@ Details: [ARCHITECTURE](docs/ARCHITECTURE.md) · [DHT](docs/DHT.md) ·
 - `--no-dht` viewer mode, `--no-fetch` harvest-only mode, `--headless`
 - `--self-test` offline suite, CI on every push
 - Firewall script that reads the real ports from `config.ini`
+- Windows service with one command: `tools\service.cmd`
 
 ## Configuration
 
@@ -139,15 +156,30 @@ edited. See [BRANDING](docs/BRANDING.md) for the full debranding guide.
 ```bash
 curl 'http://localhost:8090/api/search?q=ubuntu&per=5&sort=seeders'
 curl 'http://localhost:8090/api/torrent/<40-char-hash>'
+curl 'http://localhost:8090/api/ip/203.0.113.7'
 curl 'http://localhost:8090/api/stats'
 ```
 
 Full reference: [docs/API.md](docs/API.md).
 
+## Importing old records
+
+The DHT only shows what peers announce now, so old torrents come from files you
+already have:
+
+```cmd
+bin\DigServer.exe --import D:\torrents
+bin\DigServer.exe --import-hashes hashes.txt
+```
+
+Everything you saw but could not resolve is kept in `data/pending.txt` and retried
+on every start. Details: [docs/IMPORT.md](docs/IMPORT.md).
+
 ## Deploy
 
 Reverse proxy, service setup, tuning, backups: [docs/DEPLOY.md](docs/DEPLOY.md).
 Security model and blocklist: [docs/SECURITY.md](docs/SECURITY.md).
+Address index and its limits: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ```nginx
 location / {

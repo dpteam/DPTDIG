@@ -99,7 +99,8 @@ namespace Dig.Dht
                 }
                 catch (Exception ex)
                 {
-                    Log.Warn("DHT", "cannot bind udp/" + ports[i] + ": " + ex.Message);
+                    Log.Warn("DHT", "cannot bind udp/" + ports[i] + ": " + ex.Message +
+                                    (i == 0 ? " - another torrent client (qBittorrent, Transmission) may hold it" : ""));
                 }
             }
 

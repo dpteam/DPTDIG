@@ -443,6 +443,11 @@ main.wrap { flex: 1 0 auto; padding-top: 32px; padding-bottom: 56px; }
 .files .path { overflow-wrap: anywhere; }
 .panel > p.muted { padding: 16px 18px; margin: 0; }
 
+.torrent-peers { margin-top: 10px; font-size: 13px; color: var(--muted); }
+
+.peers td.num, .peers th.num { white-space: nowrap; }
+.peers .path a { overflow-wrap: anywhere; }
+
 /* ------------------------------------------------------------------ stats */
 
 .page-head { margin: 0 0 20px; }

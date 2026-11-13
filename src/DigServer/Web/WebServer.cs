@@ -320,6 +320,34 @@ namespace Dig.Web
                 return;
             }
 
+            if (path == "/ip" && _ctx.Cfg.PeerTrackingEnabled && _ctx.Cfg.PeerPublicLookup)
+            {
+                string queryAddress = (request.QueryString("addr") ?? "").Trim();
+                if (IsValidLookupAddress(queryAddress))
+                {
+                    Redirect(response, _ctx.Url("/ip/" + queryAddress));
+                    return;
+                }
+                Html(response, Pages.IpLookupForm(_ctx, lang));
+                return;
+            }
+
+            if (path.StartsWith("/ip/", StringComparison.Ordinal) && _ctx.Cfg.PeerTrackingEnabled && _ctx.Cfg.PeerPublicLookup)
+            {
+                string address = path.Substring(4).Trim();
+                if (!IsValidLookupAddress(address))
+                {
+                    response.Status = 404;
+                    Html(response, Pages.ErrorPage(_ctx, lang, 404, lang.T("not_found"), lang.T("ip_invalid")));
+                    return;
+                }
+                Html(response, Pages.IpPage(_ctx, lang, address));
+                // These pages mirror public DHT chatter about an address; they must
+                // never end up in a search engine index.
+                response.Set("X-Robots-Tag", "noindex, nofollow, noarchive");
+                return;
+            }
+
             if (path == "/api/search")
             {
                 string query = (request.QueryString("q") ?? "").Trim();
@@ -345,6 +373,19 @@ namespace Dig.Web
                 return;
             }
 
+            if (path.StartsWith("/api/ip/", StringComparison.Ordinal) && _ctx.Cfg.PeerTrackingEnabled && _ctx.Cfg.PeerPublicLookup)
+            {
+                string address = path.Substring("/api/ip/".Length).Trim();
+                if (!IsValidLookupAddress(address))
+                {
+                    response.Status = 400;
+                    Json(response, Api.Error("expected an IPv4 address"));
+                    return;
+                }
+                Json(response, Api.IpLookup(_ctx, address));
+                return;
+            }
+
             if (path == "/api/stats")
             {
                 Json(response, Api.Stats(_ctx));
@@ -359,6 +400,13 @@ namespace Dig.Web
 
             response.Status = 404;
             Html(response, Pages.ErrorPage(_ctx, lang, 404, lang.T("not_found"), lang.T("not_found_hint")));
+        }
+
+        private static bool IsValidLookupAddress(string address)
+        {
+            System.Net.IPAddress parsed;
+            if (!System.Net.IPAddress.TryParse((address ?? "").Trim(), out parsed)) return false;
+            return parsed.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork;
         }
 
         private Torrent FindTorrent(string raw)

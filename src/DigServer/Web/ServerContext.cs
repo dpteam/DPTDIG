@@ -12,6 +12,7 @@ namespace Dig.Web
         public Config Cfg;
         public TorrentStore Store;
         public SearchIndex Index;
+        public PeerStore Peers;
         public DhtNode Dht;
         public Crawler Crawler;
         public string Version = "1.0.0";

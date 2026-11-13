@@ -58,11 +58,17 @@ namespace Dig.Dht
 
             _fetcher.OnFetched = OnFetched;
             _fetcher.OnFailed = OnFailed;
+            _fetcher.OnGiveUp = OnGiveUp;
+            _fetcher.OnPeers = OnPeers;
             dht.OnAnnounce += OnAnnounce;
             dht.OnInfohash += OnInfohash;
         }
 
         public MetadataFetcher Fetcher { get { return _fetcher; } }
+        /// <summary>Unresolved hashes kept across restarts.</summary>
+        public PendingHashes Pending;
+        /// <summary>Which address was seen holding which torrent.</summary>
+        public PeerStore Peers;
         public bool Paused { get { return _paused; } set { _paused = value; } }
         public long Harvested { get { return Interlocked.Read(ref _harvested); } }
         public long Queued { get { return Interlocked.Read(ref _queued); } }
@@ -93,9 +99,48 @@ namespace Dig.Dht
             _sampleThread.Name = "dht-sample";
             _sampleThread.Start();
 
+            ReplayPending();
+
             Log.Info("CRAWL", "crawler started (sample=" + (_cfg.SampleEnabled ? "on" : "off") +
                               ", harvest announce=" + (_cfg.HarvestAnnounce ? "on" : "off") +
                               ", get_peers=" + (_cfg.HarvestGetPeers ? "on" : "off") + ")");
+        }
+
+        /// <summary>
+        /// Feeds the unresolved hashes from previous runs back into the fetcher.
+        /// Slowly, in the background, so a huge backlog never starves live traffic.
+        /// </summary>
+        private void ReplayPending()
+        {
+            if (Pending == null || Pending.Count == 0) return;
+            Thread replay = new Thread(delegate()
+            {
+                int total = 0;
+                try
+                {
+                    while (_running)
+                    {
+                        List<string> batch = Pending.Take(200);
+                        if (batch.Count == 0) break;
+                        for (int i = 0; i < batch.Count; i++)
+                        {
+                            byte[] hash;
+                            if (!Hex.TryDecode(batch[i], out hash) || hash.Length != 20) continue;
+                            HashJob job = new HashJob { Hash = hash, Hex = batch[i] };
+                            if (_fetcher.Enqueue(job)) total++;
+                        }
+                        Sleep(2000);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("CRAWL", "pending replay: " + ex.Message);
+                }
+                Log.Info("CRAWL", "retrying " + total + " previously unresolved hashes");
+            });
+            replay.IsBackground = true;
+            replay.Name = "pending-replay";
+            replay.Start();
         }
 
         public void Stop()
@@ -113,6 +158,7 @@ namespace Dig.Dht
         private void OnAnnounce(byte[] hash, IPEndPoint peer)
         {
             Interlocked.Increment(ref _announces);
+            if (Peers != null && peer != null) Peers.Note(peer.Address, Hex.Encode(hash));
             Harvest(hash, peer, 1, 0);
         }
 
@@ -336,6 +382,20 @@ namespace Dig.Dht
                 Interlocked.Increment(ref _storeErrors);
                 Log.Warn("CRAWL", "store " + job.Hex + ": " + ex.Message);
             }
+        }
+
+        /// <summary>All retries are exhausted. Keep the hash instead of forgetting it: the DHT
+        /// only shows what peers announce now, so a dead torrent may come back.</summary>
+        private void OnGiveUp(HashJob job)
+        {
+            if (Pending != null && job != null && job.Hex != null) Pending.Add(job.Hex);
+        }
+
+        /// <summary>Peers discovered while resolving a hash feed the address index.</summary>
+        private void OnPeers(byte[] hash, IPEndPoint peer)
+        {
+            if (Peers == null || peer == null || hash == null) return;
+            Peers.Note(peer.Address, Hex.Encode(hash));
         }
 
         private void OnFailed(HashJob job, string error)

@@ -23,6 +23,8 @@ namespace Dig
 
             TestBencode();
             TestTorrentInfo();
+            TestTorrentFileReader();
+            TestHashExtraction();
             TestTokenizer();
             TestClock();
             TestBranding();
@@ -107,8 +109,70 @@ namespace Dig
             Check("torrent parse rejects garbage", bad == null && error != null);
         }
 
-        private static void TestTokenizer()
+        private static void TestTorrentFileReader()
         {
+            string dir = Path.Combine(Path.GetTempPath(), "dig-torrentfile-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(dir);
+
+                // A single-file torrent, built by hand so the expected hash is known.
+                string name = "sample.iso";
+                string announce = "http://tracker.example/announce";
+                string info = "d6:lengthi12345678e4:name" + name.Length + ":" + name +
+                              "12:piece lengthi262144e6:pieces40:" + new string('A', 40) + "e";
+                string torrent = "d8:announce" + announce.Length + ":" + announce + "4:info" + info + "e";
+                string path = Path.Combine(dir, "sample.torrent");
+                File.WriteAllBytes(path, Encoding.ASCII.GetBytes(torrent));
+
+                // The info hash must be SHA-1 over the raw info bytes, not over a
+                // re-encoded dictionary - that is the whole point of this reader.
+                byte[] expected = Crypto.Sha1(Encoding.ASCII.GetBytes(info));
+
+                Config cfg = new Config();
+                cfg.MaxFiles = 400;
+                cfg.MaxNameLength = 300;
+                string error;
+                Torrent t = TorrentFileReader.Read(path, cfg, out error);
+
+                Check("torrent file parses", t != null && error == null);
+                Check("torrent file name", t != null && t.Name == "sample.iso");
+                Check("torrent file size", t != null && t.Size == 12345678L);
+                Check("torrent file info hash matches raw bytes", t != null && Crypto.Equals(t.Hash, expected));
+
+                // Garbage must be rejected, not crash.
+                string bad = Path.Combine(dir, "bad.torrent");
+                File.WriteAllBytes(bad, Encoding.ASCII.GetBytes("d4:infoe"));
+                Torrent broken = TorrentFileReader.Read(bad, cfg, out error);
+                Check("torrent file rejects garbage", broken == null && error != null);
+            }
+            catch (Exception ex)
+            {
+                Check("torrent file test crashed: " + ex.Message, false);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        private static void TestHashExtraction()
+        {
+            Check("hash from bare line",
+                Import.Importer.ExtractHash("0123456789abcdef0123456789abcdef01234567") ==
+                "0123456789abcdef0123456789abcdef01234567");
+            Check("hash from magnet",
+                Import.Importer.ExtractHash("magnet:?xt=urn:btih:FEDCBA9876543210FEDCBA9876543210FEDCBA98&dn=x") ==
+                "fedcba9876543210fedcba9876543210fedcba98");
+            Check("hash with reason column",
+                Import.Importer.ExtractHash("0123456789abcdef0123456789abcdef01234567\tDMCA") ==
+                "0123456789abcdef0123456789abcdef01234567");
+            Check("comment is ignored", Import.Importer.ExtractHash("# 0123456789abcdef0123456789abcdef01234567") == null);
+            Check("short hash is rejected", Import.Importer.ExtractHash("0123456789abcdef") == null);
+            Check("empty line is ignored", Import.Importer.ExtractHash("   ") == null);
+        }
+
+        private static void TestTokenizer()        {
             List<string> tokens = Text.Tokenize("Ubuntu-24.04 Desktop AMD64 [ISO]", 20);
             Check("tokenizer lowercases", tokens.Contains("ubuntu"));
             Check("tokenizer splits punctuation", tokens.Contains("desktop") && tokens.Contains("amd64"));

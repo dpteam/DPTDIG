@@ -112,25 +112,44 @@ Published under a sub-path (`example.com/dig/`) instead? Set
 http://host:8090/dig/; }`. Links, cookies, `sitemap.xml` and the manifest all
 follow that prefix.
 
-## Running as a service
+## Running as a Windows service
 
-Windows has no built-in service host for arbitrary exes without `sc create`
-tricks, so two options:
+The exe installs itself; there is no separate wrapper and no MSI.
 
-**Scheduled task (simplest)**
+```cmd
+tools\service.cmd            :: install + start (UAC prompt)
+tools\service.cmd -status    :: state + health check
+tools\service.cmd -restart
+tools\service.cmd -stop
+tools\service.cmd -remove
+```
+
+What it does under the hood: `sc create dig binPath= "<dir>\DigServer.exe --service"
+start= auto obj= LocalSystem`, plus a failure policy that restarts the service
+after 5 s, 10 s and 30 s. The service runs in session 0 as `LocalSystem`, with its
+working directory in `bin\`, so `data/`, `logs/` and `config.ini` are the same ones
+the console run uses.
+
+Notes:
+
+* Rebuilding while the service runs fails — the compiler cannot overwrite a
+  running exe. `sc stop dig` first (admin), or `tools\service.cmd -stop`.
+* `--service` from an ordinary console does **not** hang waiting for a service
+  dispatcher: it detects an interactive session and runs headless instead.
+* The service logs everything to `bin\logs\dig-*.log`; the Application event log
+  only gets the SCM's own start/stop entries.
+* `tools\ci-test.ps1` deliberately leaves a running service alone and tests the
+  existing binary on its own ports. Killing the service would make the SCM record
+  an unexpected termination.
+
+## Running as a scheduled task
+
+If you prefer not to install a service:
 
 ```cmd
 schtasks /create /tn "dig" /tr "E:\dig\bin\DigServer.exe --headless" ^
   /sc onstart /ru SYSTEM /rl HIGHEST /f
 schtasks /run /tn "dig"
-```
-
-**NSSM** (if you already use it)
-
-```cmd
-nssm install dig E:\dig\bin\DigServer.exe --headless
-nssm set dig AppDirectory E:\dig\bin
-nssm start dig
 ```
 
 Either way the process must run in `bin\` (it sets its working directory to the

@@ -50,6 +50,10 @@ namespace Dig.Dht
 
         public Action<HashJob, TorrentInfo> OnFetched;
         public Action<HashJob, string> OnFailed;
+        /// <summary>Called once a hash has used all its retries; the caller may keep it.</summary>
+        public Action<HashJob> OnGiveUp;
+        /// <summary>Every peer address discovered for a hash (feeds the address index).</summary>
+        public Action<byte[], IPEndPoint> OnPeers;
 
         public MetadataFetcher(Config cfg, DhtNode dht)
         {
@@ -188,6 +192,16 @@ namespace Dig.Dht
                 return;
             }
 
+            Action<byte[], IPEndPoint> peerSink = OnPeers;
+            if (peerSink != null)
+            {
+                for (int i = 0; i < peers.Count; i++)
+                {
+                    try { peerSink(job.Hash, peers[i]); }
+                    catch { }
+                }
+            }
+
             string lastError = "no peers";
             int limit = Math.Min(peers.Count, _cfg.MaxPeersPerHash);
             for (int i = 0; i < limit; i++)
@@ -226,6 +240,16 @@ namespace Dig.Dht
                 job.NextTryTicks = DateTime.UtcNow.AddMinutes(_cfg.RetryAfterMin).Ticks;
                 lock (_sync) _delayed.Add(job);
             }
+            else
+            {
+                Action<HashJob> giveUp = OnGiveUp;
+                if (giveUp != null)
+                {
+                    try { giveUp(job); }
+                    catch { }
+                }
+            }
+
             Action<HashJob, string> handler = OnFailed;
             if (handler != null)
             {

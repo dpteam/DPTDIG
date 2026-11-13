@@ -125,6 +125,17 @@ namespace Dig.Core
             d["content"] = "Content";
             d["preview"] = "Preview";
             d["new"] = "new";
+            d["ip_intro"] = "Addresses that appeared in public DHT peer lists together with these torrents. This is what the network broadcasts, not a download log.";
+            d["ip_torrents"] = "Torrents seen from this address";
+            d["ip_empty"] = "No records for this address";
+            d["ip_empty_hint"] = "Either it has not been seen yet, or the record aged out of the retention window.";
+            d["ip_what"] = "What this means";
+            d["ip_what_body"] = "A record only says that this address showed up in a peer list for a torrent at some point. It does not prove a download, and one address can be a whole household, an office, a mobile carrier or a VPN exit shared by thousands of people. We keep the data for a limited time and never link it to an account, because we do not have accounts.";
+            d["ip_invalid"] = "Expected an IPv4 address.";
+            d["ip_lookup"] = "Address lookup";
+            d["ip_seen_from"] = "seen from";
+            d["ip_addresses"] = "addresses";
+            d["ip_link"] = "Addresses";
             return d;
         }
 
@@ -219,6 +230,17 @@ namespace Dig.Core
             d["content"] = "Содержимое";
             d["preview"] = "Просмотр";
             d["new"] = "новое";
+            d["ip_intro"] = "Адреса, которые встречались в публичных списках пиров DHT вместе с этими торрентами. Это то, что сеть вещает сама, а не журнал скачиваний.";
+            d["ip_torrents"] = "Торренты, замеченные с этого адреса";
+            d["ip_empty"] = "Записей по этому адресу нет";
+            d["ip_empty_hint"] = "Либо адрес ещё не встречался, либо запись вышла за срок хранения.";
+            d["ip_what"] = "Что это значит";
+            d["ip_what_body"] = "Запись означает только то, что адрес когда-то появился в списке пиров для торрента. Она не доказывает скачивание, и один адрес может быть целым домом, офисом, мобильным оператором или выходом VPN, общим для тысяч людей. Данные хранятся ограниченное время и никогда не связываются с аккаунтом — аккаунтов у нас нет.";
+            d["ip_invalid"] = "Ожидается IPv4-адрес.";
+            d["ip_lookup"] = "Поиск по адресу";
+            d["ip_seen_from"] = "замечен с";
+            d["ip_addresses"] = "адресов";
+            d["ip_link"] = "Адреса";
             return d;
         }
     }

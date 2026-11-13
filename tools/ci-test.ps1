@@ -59,7 +59,25 @@ Write-Host '=== dig CI ===' -ForegroundColor Cyan
 # ------------------------------------------------------------------- build
 
 Write-Host '[1/4] build' -ForegroundColor Cyan
-& cmd /c "`"$root\build.cmd`"" | Out-Null
+
+# The compiler cannot overwrite an exe that is in use. When the Windows service
+# is running we test the binary that is already there instead of killing it.
+$exeLocked = $false
+if (Test-Path $exe) {
+    try {
+        $handle = [System.IO.File]::Open($exe, 'Open', 'ReadWrite', 'None')
+        $handle.Close()
+    } catch {
+        $exeLocked = $true
+    }
+}
+
+if ($exeLocked) {
+    Write-Host '  exe is in use (the dig service is running) - testing the existing binary' -ForegroundColor DarkYellow
+    Write-Host '  stop it with "sc stop dig" (as admin) to rebuild' -ForegroundColor DarkGray
+} else {
+    & cmd /c "`"$root\build.cmd`"" | Out-Null
+}
 Check 'build produced DigServer.exe' (Test-Path $exe)
 
 if (-not (Test-Path $exe)) {
@@ -78,8 +96,14 @@ Check 'self-test exit code 0' ($selfCode -eq 0) "exit=$selfCode"
 # ------------------------------------------------------------------- start
 
 Write-Host '[3/4] start server' -ForegroundColor Cyan
-Get-Process DigServer -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force
-Start-Sleep -Milliseconds 300
+
+# Never kill a running service: the SCM would log an unexpected termination and
+# the operator would see a "service crashed" event for something we did. The test
+# instance uses its own ports and its own PID is stopped in the finally block.
+$service = Get-Service -Name 'dig' -ErrorAction SilentlyContinue
+if ($service -and $service.Status -eq 'Running') {
+    Write-Host '  note: the dig service is running, leaving it alone (test uses its own ports)' -ForegroundColor DarkGray
+}
 
 $outLog = Join-Path $bin 'ci-out.log'
 $errLog = Join-Path $bin 'ci-err.log'
@@ -133,6 +157,11 @@ try {
     Check 'api/stats ok' ([bool]($stats.ok -eq $true))
     Check 'api/stats reports version' ([bool]($stats.version.Length -gt 0))
     Check 'api/stats hides nothing secret' ([bool]($r.Content -notmatch 'serverSecret|adminToken'))
+
+    Check 'GET /ip lookup form' ((Status "$base/ip") -eq 200)
+    Check 'GET /api/ip bad address' ((Status "$base/api/ip/not-an-ip") -eq 400)
+    $ipJson = (Invoke-WebRequest -UseBasicParsing "$base/api/ip/203.0.113.7" -TimeoutSec 5).Content | ConvertFrom-Json
+    Check 'api/ip answers' ([bool]($ipJson.ok -eq $true))
 
     # ---------------------------------------------------------------- admin
 

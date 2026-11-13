@@ -111,6 +111,8 @@ namespace Dig.Web
             sb.Append("<div class=\"foot-links\">");
             sb.Append("<a href=\"").Append(U(ctx, "/about")).Append("\">").Append(H(lang.T("about"))).Append("</a>");
             sb.Append("<a href=\"").Append(U(ctx, "/abuse")).Append("\">").Append(H(lang.T("abuse_title"))).Append("</a>");
+            if (cfg.PeerTrackingEnabled && cfg.PeerPublicLookup)
+                sb.Append("<a href=\"").Append(U(ctx, "/ip")).Append("\">").Append(H(lang.T("ip_link"))).Append("</a>");
             sb.Append("<a href=\"").Append(U(ctx, "/api/stats")).Append("\">").Append(H(lang.T("api"))).Append("</a>");
             sb.Append("</div>\n");
             if (!string.IsNullOrEmpty(cfg.Footer)) sb.Append("<div class=\"foot-note\">").Append(H(cfg.Footer)).Append("</div>\n");
@@ -289,6 +291,17 @@ namespace Dig.Web
             if (t.Seeders > 0) body.Append("<span>").Append(t.Seeders.ToString(CultureInfo.InvariantCulture)).Append(' ').Append(H(lang.T("seeders"))).Append("</span>");
             body.Append("<span>").Append(H(lang.T("added"))).Append(' ').Append(H(Clock.Age(t.FirstSeen, lang.Code))).Append("</span>");
             body.Append("<span>").Append(H(lang.T("seen"))).Append(' ').Append(H(Clock.Age(t.LastSeen, lang.Code))).Append("</span></div>\n");
+
+            if (ctx.Peers != null && ctx.Peers.Enabled)
+            {
+                int addresses = ctx.Peers.IpCountForHash(t.Hex);
+                if (addresses > 0)
+                {
+                    body.Append("<div class=\"torrent-peers\">").Append(H(lang.T("ip_seen_from"))).Append(' ')
+                        .Append("<a href=\"").Append(U(ctx, "/ip")).Append("\">").Append(addresses.ToString(CultureInfo.InvariantCulture))
+                        .Append(' ').Append(H(lang.T("ip_addresses"))).Append("</a></div>\n");
+                }
+            }
             body.Append("</section>\n");
 
             body.Append("<section class=\"panel magnet-panel\">\n");
@@ -334,6 +347,67 @@ namespace Dig.Web
 
         // ------------------------------------------------------------------- stats
 
+        public static string IpLookupForm(ServerContext ctx, Lang lang)
+        {
+            StringBuilder body = new StringBuilder(2048);
+            body.Append("<section class=\"page-head\"><h1>").Append(H(lang.T("ip_lookup"))).Append("</h1>");
+            body.Append("<p class=\"muted\">").Append(H(lang.T("ip_intro"))).Append("</p></section>\n");
+            body.Append("<section class=\"panel prose\">\n<form class=\"searchbox\" action=\"").Append(U(ctx, "/ip"))
+                .Append("\" method=\"get\">")
+                .Append("<input type=\"text\" name=\"addr\" placeholder=\"203.0.113.7\" inputmode=\"decimal\" autocomplete=\"off\" required>")
+                .Append("<button type=\"submit\">").Append(H(lang.T("search"))).Append("</button></form>\n</section>\n");
+            body.Append("<section class=\"panel prose\">\n<h2>").Append(H(lang.T("ip_what"))).Append("</h2><p>")
+                .Append(H(lang.T("ip_what_body"))).Append("</p>\n</section>\n");
+            return Layout(ctx, lang, lang.T("ip_lookup"), lang.T("ip_intro"), "/ip", body.ToString(),
+                          "<meta name=\"robots\" content=\"noindex, nofollow\">\n");
+        }
+
+        public static string IpPage(ServerContext ctx, Lang lang, string address)
+        {
+            List<PeerHit> hits = ctx.Peers != null ? ctx.Peers.ForIp(address) : new List<PeerHit>();
+            StringBuilder body = new StringBuilder(8192);
+
+            body.Append("<section class=\"page-head\"><h1>").Append(H(address)).Append("</h1>");
+            body.Append("<p class=\"muted\">").Append(H(lang.T("ip_intro"))).Append("</p></section>\n");
+
+            body.Append("<section class=\"panel\">\n<div class=\"panel-head\"><h2>").Append(H(lang.T("ip_torrents")))
+                .Append("</h2><span class=\"muted\">").Append(hits.Count.ToString(CultureInfo.InvariantCulture))
+                .Append("</span></div>\n");
+
+            if (hits.Count == 0)
+            {
+                body.Append("<div class=\"empty\"><p>").Append(H(lang.T("ip_empty"))).Append("</p><p class=\"muted small\">")
+                    .Append(H(lang.T("ip_empty_hint"))).Append("</p></div>\n");
+            }
+            else
+            {
+                body.Append("<table class=\"files peers\"><thead><tr><th>").Append(H(lang.T("name")))
+                    .Append("</th><th class=\"num\">").Append(H(lang.T("size"))).Append("</th><th class=\"num\">")
+                    .Append(H(lang.T("seen"))).Append("</th></tr></thead><tbody>\n");
+                for (int i = 0; i < hits.Count; i++)
+                {
+                    PeerHit hit = hits[i];
+                    Torrent torrent = ctx.Store.Get(hit.Hash);
+                    string label = torrent != null ? torrent.Name : hit.Hash.Substring(0, 12) + "\u2026";
+                    body.Append("<tr><td class=\"path\">");
+                    if (torrent != null)
+                        body.Append("<a href=\"").Append(U(ctx, "/t/" + hit.Hash)).Append("\">").Append(H(label)).Append("</a>");
+                    else
+                        body.Append("<span class=\"mono\">").Append(H(label)).Append("</span>");
+                    body.Append("</td><td class=\"num\">").Append(torrent != null ? H(Text.HumanSize(torrent.Size)) : "\u2014")
+                        .Append("</td><td class=\"num\">").Append(H(Clock.Age(hit.LastSeen, lang.Code))).Append("</td></tr>\n");
+                }
+                body.Append("</tbody></table>\n");
+            }
+            body.Append("</section>\n");
+
+            body.Append("<section class=\"panel prose\">\n<h2>").Append(H(lang.T("ip_what"))).Append("</h2>\n<p>")
+                .Append(H(lang.T("ip_what_body"))).Append("</p>\n</section>\n");
+
+            return Layout(ctx, lang, address, lang.T("ip_torrents"), "/ip/" + address, body.ToString(),
+                          "<meta name=\"robots\" content=\"noindex, nofollow\">\n");
+        }
+
         public static string StatsPage(ServerContext ctx, Lang lang)
         {
             Config cfg = ctx.Cfg;
@@ -347,6 +421,8 @@ namespace Dig.Web
             Card(body, lang.T("nodes"), ctx.Dht != null ? Text.HumanCount(ctx.Dht.Nodes) : "0",
                 ctx.Dht != null ? "udp/" + ctx.Dht.Port : "");
             Card(body, lang.T("requests"), Text.HumanCount(ctx.RequestsServed), lang.T("uptime") + " " + ctx.Uptime());
+            if (ctx.Peers != null && ctx.Peers.Enabled)
+                Card(body, lang.T("ip_link"), Text.HumanCount(ctx.Peers.IpCount), lang.T("ip_addresses"));
             body.Append("</section>\n");
 
             body.Append("<section class=\"panel\">\n<div class=\"panel-head\"><h2>").Append(H(lang.T("crawler"))).Append("</h2><span class=\"dot ")

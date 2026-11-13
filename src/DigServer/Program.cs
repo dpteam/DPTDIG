@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading;
 using Dig.Core;
 using Dig.Dht;
+using Dig.Import;
 using Dig.Store;
 using Dig.Web;
 
@@ -11,7 +12,7 @@ namespace Dig
 {
     /// <summary>
     /// Process entry point: config, logging, index, DHT, crawler, two web boards.
-    /// No App.config, no service host, no dependencies - just an exe.
+    /// No App.config, no NuGet - just an exe that also knows how to be a service.
     /// </summary>
     internal static class Program
     {
@@ -21,70 +22,110 @@ namespace Dig
         private static DhtNode _dht;
         private static Crawler _crawler;
         private static TorrentStore _store;
+        private static PendingHashes _pending;
+        private static PeerStore _peers;
+        private static Config _cfg;
         private static readonly ManualResetEvent StopEvent = new ManualResetEvent(false);
         private static int _exitCode;
+
+        public static string Version { get { return "1.1.0"; } }
 
         private static int Main(string[] args)
         {
             try { Directory.SetCurrentDirectory(AppDomain.CurrentDomain.BaseDirectory); } catch { }
 
-            bool headless = false;
-            bool noDht = false;
-            bool noFetch = false;
-            bool selfTest = false;
-            string levelOverride = null;
-            int? port = null;
-            int? adminPort = null;
-            int? udpPort = null;
-
+            Options options;
             try
             {
-                for (int i = 0; i < args.Length; i++)
-                {
-                    string a = args[i] ?? "";
-                    if (Equals(a, "--headless")) headless = true;
-                    else if (Equals(a, "--no-dht")) noDht = true;
-                    else if (Equals(a, "--no-fetch")) noFetch = true;
-                    else if (Equals(a, "--self-test")) selfTest = true;
-                    else if (Equals(a, "--level") && i + 1 < args.Length) levelOverride = args[++i];
-                    else if (Equals(a, "--port") && i + 1 < args.Length) port = ParseInt(args[++i]);
-                    else if (Equals(a, "--admin-port") && i + 1 < args.Length) adminPort = ParseInt(args[++i]);
-                    else if (Equals(a, "--udp-port") && i + 1 < args.Length) udpPort = ParseInt(args[++i]);
-                    else if (Equals(a, "--help") || Equals(a, "-h")) { PrintUsage(); return 0; }
-                    else if (Equals(a, "--version")) { Console.WriteLine("dig " + Version); return 0; }
-                    else
-                    {
-                        Console.Error.WriteLine("Unknown argument: " + a);
-                        PrintUsage();
-                        return 1;
-                    }
-                }
+                options = Options.Parse(args);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("Bad arguments: " + ex.Message);
+                PrintUsage();
                 return 1;
             }
+
+            if (options.ShowHelp) { PrintUsage(); return 0; }
+            if (options.ShowVersion) { Console.WriteLine("dig " + Version); return 0; }
+            if (options.SelfTest) return SelfTest.Run();
 
             AppDomain.CurrentDomain.UnhandledException += OnUnhandled;
             Console.CancelKeyPress += OnCancelKey;
 
-            if (selfTest) return SelfTest.Run();
-
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            Config cfg = Config.Load(baseDir);
-            if (levelOverride != null) cfg.LogLevel = Config.ParseLevel(levelOverride, cfg.LogLevel);
-            if (port.HasValue && port.Value > 0) cfg.Port = port.Value;
-            if (adminPort.HasValue && adminPort.Value > 0) cfg.AdminPort = adminPort.Value;
-            if (udpPort.HasValue && udpPort.Value > 0) cfg.UdpPort = udpPort.Value;
-            if (noDht) cfg.DhtEnabled = false;
-            if (noFetch) cfg.MetadataEnabled = false;
+            Config cfg = Config.Load(AppDomain.CurrentDomain.BaseDirectory);
+            options.Apply(cfg);
             cfg.Normalize();
             cfg.EnsureSecrets();
 
             Log.Configure(cfg);
+
+            if (options.ImportPath != null) return RunImport(cfg, options);
+            if (options.InstallService) return ServiceHost.Install(cfg);
+            if (options.UninstallService) return ServiceHost.Uninstall();
+
+            // Service mode only makes sense when the SCM started us. Environment.
+            // UserInteractive is false exactly for service processes; running
+            // --service by hand must not block forever on a dispatcher that will
+            // never connect, so it degrades to a normal headless run instead.
+            if (options.RunAsService && Environment.UserInteractive)
+            {
+                Log.Warn("SVC", "--service was requested from an interactive session; " +
+                                "running headless instead (install it with --install-service)");
+                options.Headless = true;
+                return RunConsole(cfg, options);
+            }
+
+            if (options.RunAsService) return ServiceHost.Run(cfg);
+
+            return RunConsole(cfg, options);
+        }
+
+        // ------------------------------------------------------------------ console
+
+        private static int RunConsole(Config cfg, Options options)
+        {
             Banner(cfg);
             for (int i = 0; i < cfg.Warnings.Count; i++) Log.Warn("CFG", cfg.Warnings[i]);
+
+            if (!StartCore(cfg))
+            {
+                Shutdown();
+                return _exitCode != 0 ? _exitCode : 2;
+            }
+
+            if (!options.Headless)
+            {
+                PrintAdminHint(cfg);
+                StartConsoleLoop();
+            }
+            else
+            {
+                Log.Info("APP", "headless mode: no console commands, Ctrl+C to stop");
+            }
+
+            StopEvent.WaitOne();
+            Shutdown();
+
+            if (!options.Headless)
+            {
+                try
+                {
+                    Console.WriteLine();
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("Server stopped. Press ENTER to close this window.");
+                    Console.ResetColor();
+                    Console.ReadLine();
+                }
+                catch { }
+            }
+            return _exitCode;
+        }
+
+        /// <summary>Starts every component. Used by the console host and by the service host.</summary>
+        internal static bool StartCore(Config cfg)
+        {
+            _cfg = cfg;
 
             try
             {
@@ -96,6 +137,10 @@ namespace Dig
                 Log.Error("APP", "cannot prepare directories: " + ex.Message);
             }
 
+            Log.Info("APP", cfg.SiteName + " v" + Version + " starting (CLR " + Environment.Version +
+                            ", " + Environment.OSVersion.VersionString + ")");
+            for (int i = 0; i < cfg.Warnings.Count; i++) Log.Warn("CFG", cfg.Warnings[i]);
+
             _store = new TorrentStore(cfg);
             _store.Load();
 
@@ -103,10 +148,17 @@ namespace Dig
             index.Attach(_store.All());
             _store.Index = index;
 
+            _peers = new PeerStore(cfg);
+            _peers.Load();
+
+            _pending = new PendingHashes(cfg, cfg.PendingHashesMax);
+            _pending.Load();
+
             _ctx = new ServerContext();
             _ctx.Cfg = cfg;
             _ctx.Store = _store;
             _ctx.Index = index;
+            _ctx.Peers = _peers;
             _ctx.Version = Version;
 
             if (cfg.DhtEnabled)
@@ -116,6 +168,8 @@ namespace Dig
                 {
                     _ctx.Dht = _dht;
                     _crawler = new Crawler(cfg, _dht, _store);
+                    _crawler.Pending = _pending;
+                    _crawler.Peers = _peers;
                     _ctx.Crawler = _crawler;
                     _crawler.Start();
                 }
@@ -140,30 +194,141 @@ namespace Dig
                 if (!_admin.Start()) Log.Warn("APP", "admin board did not start");
             }
 
-            Log.Info("APP", cfg.SiteName + " v" + Version + " ready. public=" +
+            Log.Info("APP", "ready. public=" +
                             (_public.Running ? _public.Port.ToString(CultureInfo.InvariantCulture) : "off") +
                             " admin=" + (_admin != null && _admin.Running ? _admin.Port.ToString(CultureInfo.InvariantCulture) : "off") +
                             " dht=" + (_dht != null ? "udp/" + _dht.Port : "off") +
                             " index=" + _store.Count);
+            return true;
+        }
 
-            if (!headless)
+        internal static void RequestStop()
+        {
+            try { StopEvent.Set(); } catch { }
+        }
+
+        internal static void Shutdown()
+        {
+            if (_ctx != null) _ctx.ShuttingDown = true;
+            Log.Info("APP", "shutdown requested");
+
+            try { if (_public != null) _public.Stop(); } catch (Exception ex) { Log.Warn("APP", "public stop: " + ex.Message); }
+            try { if (_admin != null) _admin.Stop(); } catch (Exception ex) { Log.Warn("APP", "admin stop: " + ex.Message); }
+            try { if (_crawler != null) _crawler.Stop(); } catch (Exception ex) { Log.Warn("APP", "crawler stop: " + ex.Message); }
+            try { if (_dht != null) { _dht.SaveCache(); _dht.Stop(); } } catch (Exception ex) { Log.Warn("APP", "dht stop: " + ex.Message); }
+            try { if (_pending != null) _pending.Save(); } catch (Exception ex) { Log.Warn("APP", "pending save: " + ex.Message); }
+            try { if (_peers != null) _peers.Close(); } catch (Exception ex) { Log.Warn("APP", "peers close: " + ex.Message); }
+            try { if (_store != null) _store.Close(); } catch (Exception ex) { Log.Warn("APP", "index close: " + ex.Message); }
+
+            Log.Info("APP", "goodbye");
+            Log.Shutdown();
+        }
+
+        // ------------------------------------------------------------------- import
+
+        private static int RunImport(Config cfg, Options options)
+        {
+            Console.WriteLine("dig " + Version + " - import");
+            Console.WriteLine("  target: " + options.ImportPath);
+            Console.WriteLine("  mode  : " + (options.ImportHashesOnly ? "hashes only (queued for later)" : "torrent files and hash lists"));
+
+            TorrentStore store = new TorrentStore(cfg);
+            store.Load();
+            SearchIndex index = new SearchIndex();
+            index.Attach(store.All());
+            store.Index = index;
+
+            PendingHashes pending = new PendingHashes(cfg, cfg.PendingHashesMax);
+            pending.Load();
+
+            ImportReport report = new ImportReport();
+            if (options.ImportHashesOnly)
             {
-                PrintAdminHint(cfg);
-                StartConsoleLoop(headless);
+                Importer.ImportHashes(options.ImportPath, report, delegate(string hex)
+                {
+                    if (pending.Add(hex)) report.HashesQueued++;
+                });
             }
             else
             {
-                Log.Info("APP", "headless mode: no console commands, Ctrl+C to stop");
+                Importer.ImportPath(cfg, store, options.ImportPath, options.Recursive, report, delegate(string hex)
+                {
+                    if (pending.Add(hex)) report.HashesQueued++;
+                });
             }
+            pending.Save();
 
-            StopEvent.WaitOne();
-            Shutdown();
-            return _exitCode;
+            store.Compact();
+            store.Close();
+
+            report.Print();
+            Log.Info("IMPORT", "path=" + options.ImportPath + " added=" + report.Added +
+                               " duplicates=" + report.Duplicates + " invalid=" + report.Invalid +
+                               " hashesQueued=" + report.HashesQueued);
+            Log.Shutdown();
+            return 0;
         }
 
-        public static string Version { get { return "1.0.0"; } }
+        // ------------------------------------------------------------------ options
 
-        private static bool Equals(string a, string b)
+        private sealed class Options
+        {
+            public bool Headless;
+            public bool SelfTest;
+            public bool ShowHelp;
+            public bool ShowVersion;
+            public bool RunAsService;
+            public bool InstallService;
+            public bool UninstallService;
+            public bool NoDht;
+            public bool NoFetch;
+            public bool Recursive = true;
+            public bool ImportHashesOnly;
+            public string Level;
+            public string ImportPath;
+            public int? Port;
+            public int? AdminPort;
+            public int? UdpPort;
+
+            public static Options Parse(string[] args)
+            {
+                Options o = new Options();
+                for (int i = 0; i < args.Length; i++)
+                {
+                    string a = args[i] ?? "";
+                    if (Same(a, "--headless")) o.Headless = true;
+                    else if (Same(a, "--no-dht")) o.NoDht = true;
+                    else if (Same(a, "--no-fetch")) o.NoFetch = true;
+                    else if (Same(a, "--self-test")) o.SelfTest = true;
+                    else if (Same(a, "--service")) o.RunAsService = true;
+                    else if (Same(a, "--install-service")) o.InstallService = true;
+                    else if (Same(a, "--uninstall-service")) o.UninstallService = true;
+                    else if (Same(a, "--import-hashes")) o.ImportHashesOnly = true;
+                    else if (Same(a, "--no-recursive")) o.Recursive = false;
+                    else if (Same(a, "--level") && i + 1 < args.Length) o.Level = args[++i];
+                    else if (Same(a, "--port") && i + 1 < args.Length) o.Port = ParseInt(args[++i]);
+                    else if (Same(a, "--admin-port") && i + 1 < args.Length) o.AdminPort = ParseInt(args[++i]);
+                    else if (Same(a, "--udp-port") && i + 1 < args.Length) o.UdpPort = ParseInt(args[++i]);
+                    else if ((Same(a, "--import") || Same(a, "-i")) && i + 1 < args.Length) o.ImportPath = args[++i];
+                    else if (Same(a, "--help") || Same(a, "-h") || Same(a, "-?")) o.ShowHelp = true;
+                    else if (Same(a, "--version")) o.ShowVersion = true;
+                    else throw new ArgumentException("unknown option: " + a);
+                }
+                return o;
+            }
+
+            public void Apply(Config cfg)
+            {
+                if (Level != null) cfg.LogLevel = Config.ParseLevel(Level, cfg.LogLevel);
+                if (Port.HasValue && Port.Value > 0) cfg.Port = Port.Value;
+                if (AdminPort.HasValue && AdminPort.Value > 0) cfg.AdminPort = AdminPort.Value;
+                if (UdpPort.HasValue && UdpPort.Value > 0) cfg.UdpPort = UdpPort.Value;
+                if (NoDht) cfg.DhtEnabled = false;
+                if (NoFetch) cfg.MetadataEnabled = false;
+            }
+        }
+
+        private static bool Same(string a, string b)
         {
             return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
         }
@@ -178,15 +343,26 @@ namespace Dig
         private static void PrintUsage()
         {
             Console.WriteLine("dig " + Version + " - DHT search engine");
-            Console.WriteLine("  --port N         override server.port");
-            Console.WriteLine("  --admin-port N   override server.adminPort");
-            Console.WriteLine("  --udp-port N     override dht.udpPort");
-            Console.WriteLine("  --level X        Error|Warn|Info|Debug|Verbose");
-            Console.WriteLine("  --no-dht         do not join the DHT (viewer mode)");
-            Console.WriteLine("  --no-fetch       harvest hashes but do not fetch metadata");
-            Console.WriteLine("  --headless       no interactive console (Ctrl+C to stop)");
-            Console.WriteLine("  --self-test      run the offline test suite and exit");
-            Console.WriteLine("  --help           this text");
+            Console.WriteLine();
+            Console.WriteLine("  --port N             override server.port");
+            Console.WriteLine("  --admin-port N       override server.adminPort");
+            Console.WriteLine("  --udp-port N         override dht.udpPort");
+            Console.WriteLine("  --level X            Error|Warn|Info|Debug|Verbose");
+            Console.WriteLine("  --no-dht             do not join the DHT (viewer mode)");
+            Console.WriteLine("  --no-fetch           harvest hashes but do not fetch metadata");
+            Console.WriteLine("  --headless           no interactive console (Ctrl+C to stop)");
+            Console.WriteLine();
+            Console.WriteLine("  --import PATH        index .torrent files and hash lists offline");
+            Console.WriteLine("  --import-hashes      treat PATH as a list of hashes only");
+            Console.WriteLine("  --no-recursive       do not descend into subdirectories");
+            Console.WriteLine();
+            Console.WriteLine("  --install-service    install and start the Windows service");
+            Console.WriteLine("  --uninstall-service  stop and remove the Windows service");
+            Console.WriteLine("  --service            run as a service (called by the SCM)");
+            Console.WriteLine();
+            Console.WriteLine("  --self-test          run the offline test suite and exit");
+            Console.WriteLine("  --version            print the version");
+            Console.WriteLine("  --help               this text");
         }
 
         private static void Banner(Config cfg)
@@ -230,10 +406,8 @@ namespace Dig
             catch { }
         }
 
-        private static void StartConsoleLoop(bool headless)
+        private static void StartConsoleLoop()
         {
-            if (headless) return;
-
             Thread status = new Thread(StatusLoop);
             status.IsBackground = true;
             status.Name = "console-status";
@@ -259,6 +433,7 @@ namespace Dig
                                       " nodes=" + nodes +
                                       " hashes=" + harvested +
                                       " fetched=" + fetched +
+                                      " pending=" + (_pending != null ? _pending.Count : 0) +
                                       " queue=" + (_crawler != null ? _crawler.Fetcher.Queued : 0));
                 }
                 catch { }
@@ -278,12 +453,12 @@ namespace Dig
 
                 if (line == "quit" || line == "exit" || line == "q")
                 {
-                    RequestShutdown();
+                    RequestStop();
                     return;
                 }
                 if (line == "help" || line == "?")
                 {
-                    Console.WriteLine("  commands: stats, pause, resume, compact, reload, quit");
+                    Console.WriteLine("  commands: stats, pause, resume, compact, reload, pending, quit");
                     continue;
                 }
                 if (line == "stats")
@@ -295,20 +470,21 @@ namespace Dig
                 if (line == "resume" && _crawler != null) { _crawler.Paused = false; Console.WriteLine("  crawler resumed"); continue; }
                 if (line == "compact") { _store.Compact(); Console.WriteLine("  index compacted"); continue; }
                 if (line == "reload" && _crawler != null) { _crawler.LoadBlocklist(); Console.WriteLine("  blocklist reloaded"); continue; }
+                if (line == "pending")
+                {
+                    if (_pending != null) _pending.Save();
+                    Console.WriteLine("  unresolved hashes kept: " + (_pending != null ? _pending.Count : 0));
+                    continue;
+                }
                 Console.WriteLine("  unknown command, try 'help'");
             }
-        }
-
-        private static void RequestShutdown()
-        {
-            try { StopEvent.Set(); } catch { }
         }
 
         private static void OnCancelKey(object sender, ConsoleCancelEventArgs e)
         {
             e.Cancel = true;
             Log.Warn("APP", "Ctrl+C received, shutting down");
-            RequestShutdown();
+            RequestStop();
         }
 
         private static void OnUnhandled(object sender, UnhandledExceptionEventArgs e)
@@ -321,21 +497,6 @@ namespace Dig
             }
             catch { }
             if (e.IsTerminating) _exitCode = 3;
-        }
-
-        private static void Shutdown()
-        {
-            _ctx.ShuttingDown = true;
-            Log.Info("APP", "shutdown requested");
-
-            try { if (_public != null) _public.Stop(); } catch (Exception ex) { Log.Warn("APP", "public stop: " + ex.Message); }
-            try { if (_admin != null) _admin.Stop(); } catch (Exception ex) { Log.Warn("APP", "admin stop: " + ex.Message); }
-            try { if (_crawler != null) _crawler.Stop(); } catch (Exception ex) { Log.Warn("APP", "crawler stop: " + ex.Message); }
-            try { if (_dht != null) { _dht.SaveCache(); _dht.Stop(); } } catch (Exception ex) { Log.Warn("APP", "dht stop: " + ex.Message); }
-            try { if (_store != null) _store.Close(); } catch (Exception ex) { Log.Warn("APP", "index close: " + ex.Message); }
-
-            Log.Info("APP", "goodbye");
-            Log.Shutdown();
         }
     }
 }

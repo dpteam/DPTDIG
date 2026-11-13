@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using Dig.Core;
 using Dig.Store;
@@ -111,6 +112,40 @@ namespace Dig.Web
             w.Prop("documents", ctx.Index.Documents);
             w.EndObject();
 
+            w.Key("peers").BeginObject();
+            w.Prop("enabled", ctx.Peers != null && ctx.Peers.Enabled);
+            w.Prop("addresses", ctx.Peers != null ? ctx.Peers.IpCount : 0);
+            w.Prop("records", ctx.Peers != null ? ctx.Peers.RecordCount : 0);
+            w.Prop("retentionDays", ctx.Cfg.PeerRetentionDays);
+            w.EndObject();
+
+            w.EndObject();
+            return w.ToString();
+        }
+
+        public static string IpLookup(ServerContext ctx, string address)
+        {
+            List<PeerHit> hits = ctx.Peers != null ? ctx.Peers.ForIp(address) : new List<PeerHit>();
+            JsonWriter w = new JsonWriter();
+            w.BeginObject();
+            w.Prop("ok", true);
+            w.Prop("ip", address);
+            w.Prop("count", hits.Count);
+            w.Key("torrents").BeginArray();
+            for (int i = 0; i < hits.Count; i++)
+            {
+                Torrent t = ctx.Store.Get(hits[i].Hash);
+                w.BeginObject();
+                w.Prop("hash", hits[i].Hash);
+                w.Key("name");
+                if (t != null) w.Value(t.Name);
+                else w.Null();
+                w.Prop("size", t != null ? t.Size : 0);
+                w.Prop("firstSeen", hits[i].FirstSeen);
+                w.Prop("lastSeen", hits[i].LastSeen);
+                w.EndObject();
+            }
+            w.EndArray();
             w.EndObject();
             return w.ToString();
         }

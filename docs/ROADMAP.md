@@ -14,6 +14,10 @@ constraint unless it says otherwise.
 - [x] JSON API, sitemap, robots, manifest
 - [x] separate admin board with token → HMAC cookie
 - [x] blocklist, rate limits, firewall script, CI, offline self-test
+- [x] Windows service, one command to install
+- [x] offline import of `.torrent` files and hash lists
+- [x] unresolved hashes kept and retried across restarts
+- [x] address index (`/ip/`), bounded and opt-out
 
 ## Next
 
@@ -62,3 +66,8 @@ constraint unless it says otherwise.
 * **Name-only mode**: some torrents never resolve (private, dead). Their hashes
   are still useful as "seen" evidence — a "hash only" entry with no name is noise
   in search but gold for coverage statistics.
+* **Address index additions**: ASN/region labels from a local GeoIP database would
+  turn `/ip/` from "this address" into "this provider, this country" — far more
+  useful and far less identifying. No external API, one mmdb-style file.
+* **Trending torrents**: group by announce count per hour and show a "hot now"
+  list. The data already exists in `peers.db` timestamps.

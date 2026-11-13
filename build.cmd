@@ -27,12 +27,17 @@ echo [2/4] compiling with %CSC%
 "%CSC%" /nologo /target:exe /platform:anycpu /langversion:4 /optimize+ /debug:pdbonly ^
   /warn:4 /define:TRACE ^
   /out:"%OUT%\DigServer.exe" ^
-  /reference:System.dll /reference:System.Core.dll ^
+  /reference:System.dll /reference:System.Core.dll /reference:System.ServiceProcess.dll ^
   @"%OUT%\sources.rsp"
 
 if errorlevel 1 (
   echo.
   echo [ERROR] build failed.
+  echo.
+  echo   If the message above says the file is in use, the server or the
+  echo   Windows service is still running. Stop it first:
+  echo       sc stop dig
+  echo       tools\service.cmd -stop
   exit /b 1
 )
 

@@ -103,9 +103,37 @@ Instance counters. Safe to poll; the public page uses it for live numbers.
     "dropped": 0, "fetched": 128400, "failed": 7712, "blocked": 3,
     "queue": 41, "active": 32
   },
-  "index": { "terms": 5120000, "documents": 128400 }
+  "index": { "terms": 5120000, "documents": 128400 },
+  "peers": { "enabled": true, "addresses": 39412, "records": 120883, "retentionDays": 30 }
 }
 ```
+
+## GET /api/ip/{address}
+
+Torrents that this address was seen with in public DHT peer lists. Only available
+when `[privacy] peerTracking=true` and `publicLookup=true`; otherwise `404`.
+
+```json
+{
+  "ok": true,
+  "ip": "203.0.113.7",
+  "count": 1,
+  "torrents": [
+    {
+      "hash": "43f3cd230601099a98ca0d5454394065971421d9",
+      "name": "ubuntu-24.04-desktop-amd64.iso",
+      "size": 5905580032,
+      "firstSeen": 1794609375,
+      "lastSeen": 1794613375
+    }
+  ]
+}
+```
+
+`name` is `null` when the hash was never resolved. Invalid input → `400`.
+
+A record means "this address appeared in a peer list", nothing more — see
+[PRIVACY.md](PRIVACY.md).
 
 ## GET /api/health
 
@@ -120,11 +148,12 @@ serves requests; `503`-style failures are reported by the proxy, not here.
 
 | Path | Purpose |
 |---|---|
-| `/robots.txt` | honours `[site] noIndex` |
-| `/sitemap.xml` | home, newest search, last 500 torrent pages |
+| `/robots.txt` | honours `[site] noIndex` || `/sitemap.xml` | home, newest search, last 500 torrent pages |
 | `/brand.css` | palette generated from `config.ini [branding]` |
 | `/manifest.webmanifest` | PWA metadata, branding aware |
 | `/assets/*` | static files from `public/`, ETag + gzip |
+| `/ip` | address lookup form (noindex) |
+| `/ip/{address}` | torrents seen from an address (noindex) |
 
 ## Admin API (admin port only)
 
