@@ -34,7 +34,9 @@ namespace Dig.Dht
 
         private DateTime _rateWindow = DateTime.UtcNow;
         private int _rateCount;
-        private DateTime _lastBootstrap = DateTime.MinValue;
+        private DateTime _nextBootstrap = DateTime.MinValue;
+        private DateTime _nextCacheSave = DateTime.UtcNow.AddSeconds(60);
+        private int _bootstrapAttempts;
 
         private long _harvested;
         private long _queued;
@@ -102,6 +104,7 @@ namespace Dig.Dht
             try { if (_crawlThread != null) _crawlThread.Join(2000); } catch { }
             try { if (_sampleThread != null) _sampleThread.Join(2000); } catch { }
             try { _fetcher.Stop(); } catch { }
+            try { _dht.SaveCache(); } catch { }
             Log.Info("CRAWL", "crawler stopped");
         }
 
@@ -190,12 +193,11 @@ namespace Dig.Dht
                 {
                     _dht.SweepPending();
 
-                    if (_dht.Nodes < 32 && (DateTime.UtcNow - _lastBootstrap).TotalSeconds > 20)
+                    if (_dht.Nodes < 8 && DateTime.UtcNow >= _nextBootstrap)
                     {
-                        _lastBootstrap = DateTime.UtcNow;
-                        _dht.Bootstrap();
+                        Bootstrap();
                     }
-                    else
+                    else if (_dht.Nodes > 0)
                     {
                         List<DhtPeerNode> nodes = _dht.RandomNodes(8);
                         for (int i = 0; i < nodes.Count; i++)
@@ -204,6 +206,12 @@ namespace Dig.Dht
                             _dht.FindNode(nodes[i].EndPoint, _dht.RandomId(), 0);
                         }
                     }
+
+                    if (DateTime.UtcNow >= _nextCacheSave && _dht.Nodes >= 8)
+                    {
+                        _nextCacheSave = DateTime.UtcNow.AddSeconds(60);
+                        try { _dht.SaveCache(); } catch { }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -211,6 +219,40 @@ namespace Dig.Dht
                 }
                 Sleep(_cfg.CrawlIntervalMs);
             }
+        }
+
+        /// <summary>
+        /// Bootstraps with an exponential back-off. The public routers rate limit
+        /// clients that ask too often, so hammering them is worse than waiting.
+        /// </summary>
+        private void Bootstrap()
+        {
+            int alive = 0;
+            try
+            {
+                // the on-disk cache first: no router involved, and it survives restarts
+                alive = _dht.SeedFromCache();
+                if (alive == 0) alive = _dht.Bootstrap();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn("CRAWL", "bootstrap: " + ex.Message);
+            }
+
+            if (alive > 0)
+            {
+                _bootstrapAttempts = 0;
+                _nextBootstrap = DateTime.UtcNow.AddSeconds(30);
+                try { _dht.SaveCache(); } catch { }
+                return;
+            }
+
+            _bootstrapAttempts++;
+            int delaySec = Math.Min(300, 20 << Math.Min(_bootstrapAttempts, 4));
+            _nextBootstrap = DateTime.UtcNow.AddSeconds(delaySec);
+            Log.Warn("CRAWL", "no DHT contact answered; next attempt in " + delaySec + "s " +
+                             "(routers rate limit clients that retry too fast - inbound UDP " +
+                             "from the internet helps a lot)");
         }
 
         private void SampleLoop()

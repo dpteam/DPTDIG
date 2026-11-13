@@ -34,6 +34,10 @@ namespace Dig.Web
             if (basePath.Length > 0 && path.StartsWith(basePath + "/", StringComparison.Ordinal))
                 path = path.Substring(basePath.Length);
 
+            // The admin board reuses the same static assets (css, js, favicon), but
+            // serves no page from them: everything else needs a session.
+            if (TryStatic(path, request, response)) return;
+
             if (path == "/login")
             {
                 if (string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase))

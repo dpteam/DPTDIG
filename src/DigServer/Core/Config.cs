@@ -94,7 +94,7 @@ namespace Dig.Core
         public int UdpPort = 6881;
         public int[] UdpPortFallbacks = new int[] { 6882, 6883, 6884 };
         public string DhtBind = "0.0.0.0";
-        public string Bootstrap = "router.bittorrent.com:6881,dht.transmissionbt.com:6881,router.utorrent.com:6881,dht.aelitis.com:6881";
+        public string Bootstrap = "router.bittorrent.com:6881,router.utorrent.com:6881,dht.transmissionbt.com:6881,dht.aelitis.com:6881,dht.libtorrent.org:25401,dht.leechcraft.org:6881,dht.bt.am:6881";
         public int QueryConcurrency = 48;
         public int RoutingTableSize = 2000;
         public bool SampleEnabled = true;

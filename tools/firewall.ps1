@@ -247,12 +247,19 @@ try {
 
 Add-Line ''
 Add-Line '--- local health check (bypasses the firewall, checks the server itself) ---'
-foreach ($port in @($portWeb, $portAdmin)) {
+try {
+    $r = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $portWeb + '/api/health') -TimeoutSec 5
+    Add-Line ('  ' + $portWeb + ' -> HTTP ' + [int]$r.StatusCode + ' ' + $r.Content)
+} catch {
+    Add-Line ('  ' + $portWeb + ' -> FAILED: ' + $_.Exception.Message)
+}
+if ($adminEnabled) {
+    # the admin board answers 200 with the login page; its API stays locked
     try {
-        $r = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $port + '/api/health') -TimeoutSec 5
-        Add-Line ('  ' + $port + ' -> HTTP ' + [int]$r.StatusCode + ' ' + $r.Content)
+        $r = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $portAdmin + '/') -TimeoutSec 5
+        Add-Line ('  ' + $portAdmin + ' -> HTTP ' + [int]$r.StatusCode + ' (admin login page)')
     } catch {
-        Add-Line ('  ' + $port + ' -> FAILED: ' + $_.Exception.Message)
+        Add-Line ('  ' + $portAdmin + ' -> FAILED: ' + $_.Exception.Message)
     }
 }
 

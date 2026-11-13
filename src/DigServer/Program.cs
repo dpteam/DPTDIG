@@ -331,7 +331,7 @@ namespace Dig
             try { if (_public != null) _public.Stop(); } catch (Exception ex) { Log.Warn("APP", "public stop: " + ex.Message); }
             try { if (_admin != null) _admin.Stop(); } catch (Exception ex) { Log.Warn("APP", "admin stop: " + ex.Message); }
             try { if (_crawler != null) _crawler.Stop(); } catch (Exception ex) { Log.Warn("APP", "crawler stop: " + ex.Message); }
-            try { if (_dht != null) _dht.Stop(); } catch (Exception ex) { Log.Warn("APP", "dht stop: " + ex.Message); }
+            try { if (_dht != null) { _dht.SaveCache(); _dht.Stop(); } } catch (Exception ex) { Log.Warn("APP", "dht stop: " + ex.Message); }
             try { if (_store != null) _store.Close(); } catch (Exception ex) { Log.Warn("APP", "index close: " + ex.Message); }
 
             Log.Info("APP", "goodbye");

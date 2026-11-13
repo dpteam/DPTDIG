@@ -76,6 +76,31 @@ cannot be poisoned with mismatched metadata.
 A cheap VPS with 1 vCPU / 1 GB RAM indexes a few hundred thousand torrents per
 day. The bottleneck is metadata fetches, not bandwidth.
 
+## Bootstrap and the node cache
+
+The public routers (`router.bittorrent.com`, `dht.transmissionbt.com`, ...) rate
+limit clients that ask too often. Two things follow from that:
+
+* **Contacts are cached** in `data/nodes.dat` (plain text, up to 400 entries,
+  written every minute and on shutdown). A restart seeds the routing table from
+  that file and only falls back to a router if none of the cached contacts answer.
+* **Routers are queried in parallel** with an 8 s ceiling, and a failed round
+  backs off exponentially (20 s → 40 s → 80 s → 160 s → 300 s) instead of
+  retrying every few seconds. Hammering them only extends the block.
+
+If you see repeated `no DHT contact answered` warnings:
+
+1. check that inbound UDP reaches the box (`tools\firewall.cmd`, then
+   `netstat -ano -p UDP | findstr :6881`);
+2. make sure no other client holds the same UDP port — a running qBittorrent or
+   Transmission with the DHT enabled will compete for 6881. The server falls back
+   to `dht.udpPortFallbacks` automatically;
+3. add more routers to `dht.bootstrap` — independent operators fail
+   independently.
+
+A node with inbound UDP open accumulates contacts far faster than one behind a
+strict NAT, because other nodes can reach it and add it to their tables.
+
 ## Tuning
 
 ```ini

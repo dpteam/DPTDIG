@@ -343,7 +343,7 @@ namespace Dig.Web
             body.Append("<section class=\"cards\">\n");
             Card(body, lang.T("indexed"), Text.HumanCount(ctx.Store.Count), Text.HumanSize(ctx.Store.TotalBytes));
             Card(body, lang.T("hashes"), ctx.Crawler != null ? Text.HumanCount(ctx.Crawler.Harvested) : "0",
-                ctx.Crawler != null ? ctx.Crawler.Sampled + " samples" : "");
+                ctx.Crawler != null ? ctx.Crawler.Sampled + " " + lang.T("samples") : "");
             Card(body, lang.T("nodes"), ctx.Dht != null ? Text.HumanCount(ctx.Dht.Nodes) : "0",
                 ctx.Dht != null ? "udp/" + ctx.Dht.Port : "");
             Card(body, lang.T("requests"), Text.HumanCount(ctx.RequestsServed), lang.T("uptime") + " " + ctx.Uptime());
@@ -359,15 +359,16 @@ namespace Dig.Web
             Kv(body, lang.T("failed"), ctx.Crawler != null ? Text.HumanCount(ctx.Crawler.Failed) : "0");
             Kv(body, lang.T("queue"), ctx.Crawler != null ? Text.HumanCount(ctx.Crawler.Fetcher.Queued + ctx.Crawler.Fetcher.Active) : "0");
             Kv(body, lang.T("dht_port"), ctx.Dht != null ? "udp/" + ctx.Dht.Port : "\u2014");
-            Kv(body, "Info hash", ctx.Dht != null ? ctx.Dht.SelfHex : "\u2014");
+            Kv(body, lang.T("node_id"), ctx.Dht != null ? ctx.Dht.SelfHex : "\u2014");
             body.Append("</table>\n</section>\n");
 
-            body.Append("<section class=\"panel\">\n<div class=\"panel-head\"><h2>Index</h2></div><table class=\"kv\">\n");
-            Kv(body, "Data dir", cfg.DataDir);
-            Kv(body, "Max torrents", cfg.MaxTorrents.ToString(CultureInfo.InvariantCulture));
-            Kv(body, "Blocked hashes", ctx.Crawler != null ? ctx.Crawler.BlockedCount.ToString(CultureInfo.InvariantCulture) : "0");
-            Kv(body, "Dropped", ctx.Crawler != null ? ctx.Crawler.Dropped.ToString(CultureInfo.InvariantCulture) : "0");
-            Kv(body, "Version", ctx.Version);
+            body.Append("<section class=\"panel\">\n<div class=\"panel-head\"><h2>").Append(H(lang.T("index_panel")))
+                .Append("</h2></div><table class=\"kv\">\n");
+            Kv(body, lang.T("data_dir"), cfg.DataDir);
+            Kv(body, lang.T("max_torrents"), cfg.MaxTorrents.ToString(CultureInfo.InvariantCulture));
+            Kv(body, lang.T("blocked_hashes"), ctx.Crawler != null ? ctx.Crawler.BlockedCount.ToString(CultureInfo.InvariantCulture) : "0");
+            Kv(body, lang.T("dropped"), ctx.Crawler != null ? ctx.Crawler.Dropped.ToString(CultureInfo.InvariantCulture) : "0");
+            Kv(body, lang.T("version"), ctx.Version);
             body.Append("</table>\n</section>\n");
 
             return Layout(ctx, lang, lang.T("stats"), cfg.SiteDescription, "/stats", body.ToString(), null);

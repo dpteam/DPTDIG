@@ -7,7 +7,6 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using Dig.Core;
-
 namespace Dig.Dht
 {
     /// <summary>
@@ -145,7 +144,12 @@ namespace Dig.Dht
         public int Bootstrap()
         {
             string[] hosts = _cfg.BootstrapList();
-            int ok = 0;
+            if (hosts.Length == 0) return 0;
+
+            // Resolve first (DNS can be slow), then query all routers in parallel:
+            // sequentially they cost a full timeout each and the public routers
+            // rate limit clients that look impatient.
+            List<IPEndPoint> targets = new List<IPEndPoint>();
             for (int i = 0; i < hosts.Length; i++)
             {
                 IPEndPoint ep = NetUtil.ParseEndPoint(hosts[i], 6881);
@@ -154,22 +158,118 @@ namespace Dig.Dht
                     Log.Warn("DHT", "cannot resolve bootstrap node " + hosts[i]);
                     continue;
                 }
-                Dictionary<string, object> ping = Query(ep, "ping", Bencode.Dict(), 3000);
-                if (ping == null)
-                {
-                    Log.Debug("DHT", "bootstrap " + NetUtil.Format(ep) + " did not answer ping");
-                    continue;
-                }
-                ok++;
-                byte[] id = Bencode.Get(ping, "id") as byte[];
-                if (id != null && id.Length == 20) _table.Add(id, ep);
-                Dictionary<string, object> args = Bencode.Dict();
-                args["target"] = _selfId;
-                Query(ep, "find_node", args, 3000);
+                targets.Add(ep);
             }
-            Log.Info("DHT", "bootstrap: " + ok + "/" + hosts.Length + " nodes answered, table=" + _table.Count);
-            return ok;
+            if (targets.Count == 0) return 0;
+
+            int alive = 0;
+            object gate = new object();
+            List<WaitHandle> handles = new List<WaitHandle>();
+            for (int i = 0; i < targets.Count; i++)
+            {
+                IPEndPoint ep = targets[i];
+                ManualResetEvent done = new ManualResetEvent(false);
+                handles.Add(done);
+                ThreadPool.QueueUserWorkItem(delegate(object state)
+                {
+                    try
+                    {
+                        if (Introduce(ep, "bootstrap"))
+                        {
+                            lock (gate) alive++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Dht("DHT", "bootstrap " + NetUtil.Format(ep) + ": " + ex.Message);
+                    }
+                    finally
+                    {
+                        try { done.Set(); } catch { }
+                    }
+                });
+            }
+
+            try { WaitHandle.WaitAll(handles.ToArray(), 8000); }
+            catch { }
+            for (int i = 0; i < handles.Count; i++) { try { handles[i].Close(); } catch { } }
+
+            Log.Info("DHT", "bootstrap: " + alive + "/" + targets.Count + " nodes answered, table=" + _table.Count);
+            return alive;
         }
+
+        /// <summary>
+        /// One ping + find_node against a single contact. Returns true when it answered.
+        /// </summary>
+        public bool Introduce(IPEndPoint ep, string label)
+        {
+            if (ep == null) return false;
+            Dictionary<string, object> ping = Query(ep, "ping", Bencode.Dict(), 3000);
+            if (ping == null)
+            {
+                Log.Debug("DHT", (label ?? "node") + " " + NetUtil.Format(ep) + " did not answer ping");
+                return false;
+            }
+            byte[] id = Bencode.Get(ping, "id") as byte[];
+            if (id != null && id.Length == 20) _table.Add(id, ep);
+
+            Dictionary<string, object> args = Bencode.Dict();
+            args["target"] = _selfId;
+            Query(ep, "find_node", args, 3000);
+            return true;
+        }
+
+        /// <summary>
+        /// Seeds the table from the on-disk cache, then asks a few of those nodes for
+        /// their neighbours. Cheap, and it does not depend on the public routers.
+        /// </summary>
+        public int SeedFromCache()
+        {
+            List<DhtPeerNode> cached = NodeCache.Load(_cfg);
+            if (cached.Count == 0) return 0;
+
+            for (int i = 0; i < cached.Count; i++) _table.Add(cached[i].Id, cached[i].EndPoint);
+            Log.Info("DHT", "node cache: " + cached.Count + " contacts loaded");
+
+            int probed = Math.Min(cached.Count, 8);
+            int alive = 0;
+            object gate = new object();
+            List<WaitHandle> handles = new List<WaitHandle>();
+            for (int i = 0; i < probed; i++)
+            {
+                DhtPeerNode node = cached[i];
+                ManualResetEvent done = new ManualResetEvent(false);
+                handles.Add(done);
+                ThreadPool.QueueUserWorkItem(delegate(object state)
+                {
+                    try
+                    {
+                        if (_running && Introduce(node.EndPoint, "cache"))
+                        {
+                            lock (gate) alive++;
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { done.Set(); } catch { }
+                    }
+                });
+            }
+            try { WaitHandle.WaitAll(handles.ToArray(), 6000); }
+            catch { }
+            for (int i = 0; i < handles.Count; i++) { try { handles[i].Close(); } catch { } }
+
+            Log.Info("DHT", "node cache: " + alive + "/" + probed + " contacts answered, table=" + _table.Count);
+            return alive;
+        }
+
+        public void SaveCache()
+        {
+            NodeCache.Save(_cfg, _table.Snapshot(MaxCacheEntries));
+        }
+
+        private const int MaxCacheEntries = 400;
 
         // ----------------------------------------------------------------- queries
 
@@ -231,7 +331,13 @@ namespace Dig.Dht
             }
 
             Interlocked.Increment(ref _queriesSent);
-            if (timeoutMs <= 0) return null;
+            if (timeoutMs <= 0)
+            {
+                // fire and forget: the answer only feeds the routing table, so the
+                // transaction entry must not be left behind
+                lock (_pendingLock) _pending.Remove(key);
+                return null;
+            }
 
             bool signaled = pending.Event.WaitOne(timeoutMs);
             lock (_pendingLock) _pending.Remove(key);
